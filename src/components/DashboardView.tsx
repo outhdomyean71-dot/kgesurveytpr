@@ -4,212 +4,193 @@
  */
 
 import React, { useState } from 'react';
-import { SURVEY_QUESTIONS, SurveyResponse, GradeLevel } from '../types';
+import { ExamQuestion, ExamResult, GradeLevel } from '../types';
+import { auth } from '../firebase';
+import MyFilesSection from './MyFilesSection';
+import MyNotesSection from './MyNotesSection';
+import TeamMembersSection from './TeamMembersSection';
 import { 
-  Users, Award, ThumbsUp, MessageSquare, Search, Filter, Calendar, 
-  Trash2, FileDown, CheckCircle, Sparkles, AlertCircle, Copy, Check 
+  Users, Award, Search, Filter, Calendar, 
+  Trash2, FileDown, CheckCircle, X, Printer, Check, Copy,
+  HardDrive, StickyNote, FileText, Loader2, CheckCircle2, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface DashboardViewProps {
-  responses: SurveyResponse[];
-  onUpdateResponse: (updated: SurveyResponse) => void;
-  onDeleteResponse: (id: string) => void;
+  results: ExamResult[];
+  onUpdateResult: (updated: ExamResult) => void;
+  onDeleteResult: (id: string) => void;
+  schoolLogo?: string;
+  userId?: string;
 }
 
-export default function DashboardView({ responses, onUpdateResponse, onDeleteResponse }: DashboardViewProps) {
+export default function DashboardView({ results, onUpdateResult, onDeleteResult, schoolLogo, userId }: DashboardViewProps) {
+  const [dashboardTab, setDashboardTab] = useState<'results' | 'files' | 'notes' | 'team'>('results');
   const [selectedLevel, setSelectedLevel] = useState<GradeLevel | 'ទាំងអស់'>('ទាំងអស់');
-  const [selectedSubGrade, setSelectedSubGrade] = useState<string>('ទាំងអស់');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'analytics' | 'list'>('analytics');
-  const [copiedParentLink, setCopiedParentLink] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const effectiveUserId = userId || auth.currentUser?.uid || '';
   
   // Selection for detailed view modal
-  const [detailedResponse, setDetailedResponse] = useState<SurveyResponse | null>(null);
+  const [detailedResult, setDetailedResult] = useState<ExamResult | null>(null);
   const [teacherNotesEdit, setTeacherNotesEdit] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [copiedAi, setCopiedAi] = useState(false);
+  const [detailedQuestions, setDetailedQuestions] = useState<ExamQuestion[]>([]);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
 
   // Filter responses
-  const filteredResponses = responses.filter(r => {
+  const filteredResults = results.filter(r => {
     const matchesLevel = selectedLevel === 'ទាំងអស់' || r.gradeLevel === selectedLevel;
-    const matchesSubGrade = selectedSubGrade === 'ទាំងអស់' || r.subGrade === selectedSubGrade;
     const matchesSearch = searchQuery === '' || 
-      r.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.parentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.teacherName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesLevel && matchesSubGrade && matchesSearch;
+      r.studentName.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesLevel && matchesSearch;
   });
 
   // Calculate metrics
-  const totalCount = filteredResponses.length;
+  const totalCount = filteredResults.length;
   
-  const averageSatisfaction = totalCount === 0 ? 0 : (() => {
+  const averageScore = totalCount === 0 ? 0 : (() => {
     let sum = 0;
-    let count = 0;
-    filteredResponses.forEach(r => {
-      Object.values(r.ratings).forEach(val => {
-        sum += val;
-        count++;
-      });
-    });
-    return Number((sum / count).toFixed(2));
+    filteredResults.forEach(r => sum += r.score);
+    return Number((sum / totalCount).toFixed(2));
   })();
 
-  // Satisfaction levels count (3 = ពេញចិត្តណាស់, 2 = ពេញចិត្ត, 1 = មិនពេញចិត្ត)
-  const ratingCounts = { 1: 0, 2: 0, 3: 0 };
-  let totalRatingsCount = 0;
-  filteredResponses.forEach(r => {
-    Object.values(r.ratings).forEach(val => {
-      if (val === 1 || val === 2 || val === 3) {
-        ratingCounts[val as 1 | 2 | 3]++;
-        totalRatingsCount++;
-      }
-    });
-  });
-
-  const satisfiedPercent = totalRatingsCount === 0 ? 0 : Math.round(((ratingCounts[2] + ratingCounts[3]) / totalRatingsCount) * 100);
-  const verySatisfiedPercent = totalRatingsCount === 0 ? 0 : Math.round((ratingCounts[3] / totalRatingsCount) * 100);
-
-  // List of unique subGrades present
-  const subGrades = Array.from(new Set(responses.map(r => r.subGrade)));
-
-  // Calculate level-specific statistics for summary filtering cards
-  const kgResponses = responses.filter(r => r.gradeLevel === 'មតេយ្យ');
-  const kgCount = kgResponses.length;
-  const kgAvg = kgCount === 0 ? 0 : (() => {
-    let sum = 0;
-    let count = 0;
-    kgResponses.forEach(r => {
-      Object.values(r.ratings).forEach(val => {
-        sum += val;
-        count++;
-      });
-    });
-    return Number((sum / count).toFixed(2));
-  })();
-
-  const primaryResponses = responses.filter(r => r.gradeLevel === 'បឋមសិក្សា');
-  const primaryCount = primaryResponses.length;
-  const primaryAvg = primaryCount === 0 ? 0 : (() => {
-    let sum = 0;
-    let count = 0;
-    primaryResponses.forEach(r => {
-      Object.values(r.ratings).forEach(val => {
-        sum += val;
-        count++;
-      });
-    });
-    return Number((sum / count).toFixed(2));
-  })();
+  const passedCount = filteredResults.filter(r => (r.score / r.totalScore) >= 0.5).length;
+  const passedPercent = totalCount === 0 ? 0 : Math.round((passedCount / totalCount) * 100);
 
   // Open detailed survey response
-  const openDetails = (response: SurveyResponse) => {
-    setDetailedResponse(response);
-    setTeacherNotesEdit(response.teacherNotes || '');
-  };
-
-  // Close details
-  const closeDetails = () => {
-    setDetailedResponse(null);
-  };
-
-  // Save Teacher Notes
-  const saveTeacherNotes = () => {
-    if (!detailedResponse) return;
-    const updated: SurveyResponse = {
-      ...detailedResponse,
-      teacherNotes: teacherNotesEdit
-    };
-    onUpdateResponse(updated);
-    setDetailedResponse(updated);
-  };
-
-  // Trigger Gemini Analysis
-  const analyzeWithAI = async () => {
-    if (!detailedResponse) return;
-    setIsAnalyzing(true);
+  const openDetails = async (result: ExamResult) => {
+    setDetailedResult(result);
+    setTeacherNotesEdit(result.teacherNotes || '');
+    setLoadingQuestions(true);
+    setDetailedQuestions([]);
     try {
-      const res = await fetch('/api/gemini/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ survey: detailedResponse }),
-      });
-      const data = await res.json();
-      if (data.analysis) {
-        const updated: SurveyResponse = {
-          ...detailedResponse,
-          aiRecommendation: data.analysis
-        };
-        onUpdateResponse(updated);
-        setDetailedResponse(updated);
-      } else if (data.error) {
-        alert("កំហុស៖ " + data.error);
+      const res = await fetch(`/api/questions?gradeLevel=${encodeURIComponent(result.gradeLevel)}`);
+      if (res.ok) {
+        const qData = await res.json();
+        setDetailedQuestions(qData || []);
       }
-    } catch (err: any) {
-      alert("បរាជ័យក្នុងការទំនាក់ទំនងជាមួយ AI៖ " + err.message);
+    } catch (err) {
+      console.error('Failed to load questions for detailed result:', err);
     } finally {
-      setIsAnalyzing(false);
+      setLoadingQuestions(false);
     }
   };
 
-  const copyAiText = () => {
-    if (!detailedResponse?.aiRecommendation) return;
-    navigator.clipboard.writeText(detailedResponse.aiRecommendation);
-    setCopiedAi(true);
-    setTimeout(() => setCopiedAi(false), 2000);
+  const closeDetails = () => {
+    setDetailedResult(null);
   };
 
-  // Export to CSV helper
-  const exportToCSV = () => {
-    if (filteredResponses.length === 0) return;
-    
-    // Header
-    const csvRows = [
-      [
-        "កាលបរិច្ឆេទ", "ឈ្មោះអាណាព្យាបាល", "ឈ្មោះសិស្ស", "ភេទ", "កម្រិតថ្នាក់", "ថ្នាក់សិក្សា", "ឈ្មោះគ្រូ",
-        "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "មតិយោបល់បន្ថែម", "កំណត់សម្គាល់របស់គ្រូ"
-      ].join(",")
-    ];
+  const saveTeacherNotes = () => {
+    if (!detailedResult) return;
+    const updated: ExamResult = {
+      ...detailedResult,
+      teacherNotes: teacherNotesEdit
+    };
+    onUpdateResult(updated);
+    setDetailedResult(updated);
+  };
 
-    filteredResponses.forEach(r => {
+  const exportToCSV = () => {
+    if (filteredResults.length === 0) return;
+    const csvRows = [
+      ["កាលបរិច្ឆេទ", "ឈ្មោះសិស្ស", "ភេទ", "កម្រិតថ្នាក់", "ពិន្ទុសរុប", "មតិយោបល់គ្រូ"].join(",")
+    ];
+    filteredResults.forEach(r => {
       const row = [
         `"${r.date}"`,
-        `"${r.parentName}"`,
         `"${r.studentName}"`,
         `"${r.studentGender}"`,
         `"${r.gradeLevel}"`,
-        `"${r.subGrade}"`,
-        `"${r.teacherName}"`,
-        r.ratings[1] || 1,
-        r.ratings[2] || 1,
-        r.ratings[3] || 1,
-        r.ratings[4] || 1,
-        r.ratings[5] || 1,
-        r.ratings[6] || 1,
-        r.ratings[7] || 1,
-        r.ratings[8] || 1,
-        r.ratings[9] || 1,
-        r.ratings[10] || 1,
-        `"${(r.additionalComments || "").replace(/"/g, '""')}"`,
+        `"${r.score}/${r.totalScore}"`,
         `"${(r.teacherNotes || "").replace(/"/g, '""')}"`
       ];
       csvRows.push(row.join(","));
     });
-
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + csvRows.join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `កម្រងសំណួរស្ទង់មតិ_${selectedLevel}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `computer-exam-results-${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="space-y-6" id="dashboard-view">
-      {/* Parent Share Link & Real-time Live Status Bar */}
+    <div className="space-y-6">
+      {/* SaaS Dashboard Navigation Tabs */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-2 shadow-sm flex items-center justify-between gap-1 overflow-x-auto">
+        <div className="flex items-center gap-1.5 w-full sm:w-auto">
+          <button
+            onClick={() => setDashboardTab('results')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+              dashboardTab === 'results'
+                ? 'bg-[#0f2a4a] text-amber-400 shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Award className="h-4 w-4" />
+            <span>លទ្ធផលប្រឡង (Exam Results)</span>
+            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-400/20 text-amber-300 font-extrabold">
+              {results.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setDashboardTab('files')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+              dashboardTab === 'files'
+                ? 'bg-[#0f2a4a] text-amber-400 shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <HardDrive className="h-4 w-4 text-amber-500" />
+            <span>My Files</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardTab('notes')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+              dashboardTab === 'notes'
+                ? 'bg-[#0f2a4a] text-amber-400 shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <StickyNote className="h-4 w-4 text-blue-500" />
+            <span>My Notes</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardTab('team')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+              dashboardTab === 'team'
+                ? 'bg-[#0f2a4a] text-amber-400 shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Users className="h-4 w-4 text-emerald-500" />
+            <span>Team Members</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Render Active Section */}
+      {dashboardTab === 'files' && (
+        <MyFilesSection userId={effectiveUserId} />
+      )}
+
+      {dashboardTab === 'notes' && (
+        <MyNotesSection userId={effectiveUserId} />
+      )}
+
+      {dashboardTab === 'team' && (
+        <TeamMembersSection userId={effectiveUserId} />
+      )}
+
+      {dashboardTab === 'results' && (
+        <>
+          {/* Student Share Link */}
       <div className="bg-gradient-to-r from-blue-50 to-amber-50 border border-blue-100 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="flex items-start gap-3.5">
           <div className="p-3 bg-amber-400 text-[#0f2a4a] rounded-xl shadow-inner shrink-0">
@@ -217,596 +198,519 @@ export default function DashboardView({ responses, onUpdateResponse, onDeleteRes
           </div>
           <div className="space-y-1">
             <h3 className="text-sm font-bold text-[#0f2a4a] flex flex-wrap items-center gap-2">
-              តំណភ្ជាប់ស្ទង់មតិសម្រាប់មាតាបិតា/អាណាព្យាបាលសិស្ស
+              តំណភ្ជាប់សម្រាប់សិស្សប្រឡង
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping"></span>
-                រត់ស្វ័យប្រវត្តិ (Real-time Sync Live)
+                រត់ស្វ័យប្រវត្តិ
               </span>
             </h3>
             <p className="text-xs text-slate-500 leading-relaxed">
-              ចម្លងតំណភ្ជាប់ខាងក្រោមដើម្បីផ្ញើជូនអាណាព្យាបាលបំពេញសំណួរ។ ពេលអាណាព្យាបាលបំពេញរួច ទិន្នន័យនឹងលោតចូលក្នុងប្រព័ន្ធនេះដោយស្វ័យប្រវត្តិតែម្តង!
+              ចម្លងតំណភ្ជាប់ខាងក្រោមដើម្បីផ្ញើជូនសិស្សសម្រាប់ការប្រឡង។ ពិន្ទុនឹងចូលមកកាន់ប្រព័ន្ធស្វ័យប្រវត្តិ។
             </p>
             <div className="mt-2.5 flex items-center gap-2 bg-white/80 border border-slate-200 rounded-xl px-3 py-2 w-full max-w-xl text-[11px] font-mono text-slate-600 overflow-x-auto select-all">
-              <span>{typeof window !== 'undefined' ? `${window.location.origin}/?mode=parent` : 'https://sovannaphumi-survey.com/?mode=parent'}</span>
+              <span>{typeof window !== 'undefined' ? `${window.location.origin}/?mode=student` : 'https://exam.com/?mode=student'}</span>
             </div>
           </div>
         </div>
         <button
           onClick={() => {
-            const url = typeof window !== 'undefined' ? `${window.location.origin}/?mode=parent` : 'https://sovannaphumi-survey.com/?mode=parent';
+            const url = typeof window !== 'undefined' ? `${window.location.origin}/?mode=student` : 'https://exam.com/?mode=student';
             navigator.clipboard.writeText(url);
-            setCopiedParentLink(true);
-            setTimeout(() => setCopiedParentLink(false), 2000);
+            setCopiedLink(true);
+            setTimeout(() => setCopiedLink(false), 2000);
           }}
           className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-            copiedParentLink 
+            copiedLink 
               ? 'bg-emerald-600 text-white shadow-sm' 
-              : 'bg-[#0f2a4a] text-amber-400 hover:bg-slate-800 hover:text-white shadow-sm'
+              : 'bg-[#0f2a4a] text-amber-400 hover:bg-slate-800 shadow-sm'
           }`}
         >
-          {copiedParentLink ? (
-            <>
-              <Check className="h-4 w-4" />
-              ចម្លងជោគជ័យ!
-            </>
-          ) : (
-            <>
-              <Copy className="h-4 w-4" />
-              ចម្លងតំណភ្ជាប់
-            </>
-          )}
+          {copiedLink ? <><Check className="h-4 w-4" />ចម្លងជោគជ័យ!</> : <><Copy className="h-4 w-4" />ចម្លងតំណភ្ជាប់</>}
         </button>
       </div>
 
-      {/* Search & Filters */}
-      <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          
-          {/* Level Switcher */}
-          <div className="flex bg-slate-100 p-1 rounded-xl shrink-0">
-            {(['ទាំងអស់', 'មតេយ្យ', 'បឋមសិក្សា'] as const).map(level => (
-              <button
-                key={level}
-                onClick={() => {
-                  setSelectedLevel(level);
-                  setSelectedSubGrade('ទាំងអស់');
-                }}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-150 cursor-pointer ${
-                  selectedLevel === level
-                    ? 'bg-white text-slate-800 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                {level === 'ទាំងអស់' ? 'គ្រប់កម្រិតថ្នាក់' : level}
-              </button>
-            ))}
-          </div>
-
-          {/* Search Inputs & Export */}
-          <div className="flex flex-wrap items-center gap-3 w-full lg:justify-end">
-            <div className="relative flex-1 max-w-xs min-w-[200px]">
-              <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="ស្វែងរកឈ្មោះសិស្ស អាណាព្យាបាល គ្រូ..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition duration-150 text-slate-800 text-xs outline-none"
-              />
-            </div>
-
-            {/* Sub-Grade selector */}
-            <div className="relative">
-              <select
-                value={selectedSubGrade}
-                onChange={e => setSelectedSubGrade(e.target.value)}
-                className="appearance-none pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-700 text-xs outline-none cursor-pointer"
-              >
-                <option value="ទាំងអស់">ថ្នាក់នីមួយៗ (ទាំងអស់)</option>
-                {(selectedLevel === 'ទាំងអស់' ? subGrades : subGrades.filter(s => {
-                  if (selectedLevel === 'មតេយ្យ') return s.includes('មតេយ្យ') || s.includes('Nursery') || s.includes('Kindergarten');
-                  return s.includes('ថ្នាក់');
-                })).map(sg => (
-                  <option key={sg} value={sg}>{sg}</option>
-                ))}
-              </select>
-              <Filter className="absolute right-3.5 top-3.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            </div>
-
-            <button
-              onClick={exportToCSV}
-              disabled={filteredResponses.length === 0}
-              className="flex items-center gap-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 disabled:text-slate-300 text-slate-600 text-xs font-semibold rounded-xl cursor-pointer disabled:cursor-not-allowed transition"
-            >
-              <FileDown className="h-4 w-4" />
-              ទាញយកជា CSV
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Grade Level Interactive Reporting Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4" id="grade-level-filters">
-        {/* All Levels Card */}
-        <div 
-          onClick={() => {
-            setSelectedLevel('ទាំងអស់');
-            setSelectedSubGrade('ទាំងអស់');
-          }}
-          className={`group relative overflow-hidden rounded-2xl border p-5 shadow-sm transition-all duration-300 cursor-pointer ${
-            selectedLevel === 'ទាំងអស់'
-              ? 'bg-gradient-to-br from-[#0f2a4a] to-[#1a3d66] text-white border-[#0f2a4a] ring-2 ring-blue-500/10'
-              : 'bg-white hover:bg-slate-50 border-slate-100 text-slate-800'
-          }`}
-        >
-          <div className="absolute top-0 right-0 h-24 w-24 bg-blue-500/5 rounded-full -mr-6 -mt-6 transition-all duration-300 group-hover:scale-125" />
-          <div className="flex items-center justify-between mb-3">
-            <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${
-              selectedLevel === 'ទាំងអស់' ? 'bg-amber-400 text-[#0f2a4a]' : 'bg-slate-100 text-slate-600'
-            }`}>
-              គ្រប់កម្រិតសិក្សា (All Levels)
-            </span>
-            <Users className={`h-5 w-5 ${selectedLevel === 'ទាំងអស់' ? 'text-amber-400' : 'text-slate-400'}`} />
-          </div>
-          <p className={`text-xs font-semibold ${selectedLevel === 'ទាំងអស់' ? 'text-slate-300' : 'text-slate-400'}`}>ចម្លើយតបសរុបទាំងអស់</p>
-          <h4 className="text-2xl font-bold font-sans mt-1">{responses.length} នាក់</h4>
-          <p className={`text-[10px] mt-2 ${selectedLevel === 'ទាំងអស់' ? 'text-slate-400/80' : 'text-slate-400'}`}>
-            {selectedLevel === 'ទាំងអស់' ? '● កំពុងបង្ហាញគ្រប់កម្រិតសិក្សា' : 'ចុចដើម្បីបង្ហាញទិន្នន័យរួមគ្រប់ថ្នាក់'}
-          </p>
-        </div>
-
-        {/* Kindergarten Card */}
-        <div 
-          onClick={() => {
-            setSelectedLevel('មតេយ្យ');
-            setSelectedSubGrade('ទាំងអស់');
-          }}
-          className={`group relative overflow-hidden rounded-2xl border p-5 shadow-sm transition-all duration-300 cursor-pointer ${
-            selectedLevel === 'មតេយ្យ'
-              ? 'bg-gradient-to-br from-orange-600 to-amber-700 text-white border-orange-600 ring-2 ring-orange-500/10'
-              : 'bg-white hover:bg-slate-50 border-slate-100 text-slate-800'
-          }`}
-        >
-          <div className="absolute top-0 right-0 h-24 w-24 bg-orange-500/5 rounded-full -mr-6 -mt-6 transition-all duration-300 group-hover:scale-125" />
-          <div className="flex items-center justify-between mb-3">
-            <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${
-              selectedLevel === 'មតេយ្យ' ? 'bg-white text-orange-700' : 'bg-orange-50 text-orange-600'
-            }`}>
-              កម្រិតមតេយ្យសិក្សា (Kindergarten)
-            </span>
-            <Sparkles className={`h-5 w-5 ${selectedLevel === 'មតេយ្យ' ? 'text-amber-300' : 'text-orange-400'}`} />
-          </div>
-          <div className="flex justify-between items-baseline">
-            <div>
-              <p className={`text-xs font-semibold ${selectedLevel === 'មតេយ្យ' ? 'text-orange-100' : 'text-slate-400'}`}>ចម្លើយស្ទង់មតិ</p>
-              <h4 className="text-2xl font-bold font-sans mt-1">{kgCount} នាក់</h4>
-            </div>
-            <div className="text-right">
-              <p className={`text-xs font-semibold ${selectedLevel === 'មតេយ្យ' ? 'text-orange-100' : 'text-slate-400'}`}>ពិន្ទុមធ្យម</p>
-              <h4 className="text-lg font-bold font-sans mt-1">{kgAvg} / 3.0</h4>
-            </div>
-          </div>
-          <p className={`text-[10px] mt-2 ${selectedLevel === 'មតេយ្យ' ? 'text-orange-200/80' : 'text-slate-400'}`}>
-            {selectedLevel === 'មតេយ្យ' ? '● កំពុងច្រោះបង្ហាញកម្រិតមតេយ្យសិក្សា' : 'ចុចដើម្បីច្រោះមើលរបាយការណ៍មតេយ្យសិក្សា'}
-          </p>
-        </div>
-
-        {/* Primary Card */}
-        <div 
-          onClick={() => {
-            setSelectedLevel('បឋមសិក្សា');
-            setSelectedSubGrade('ទាំងអស់');
-          }}
-          className={`group relative overflow-hidden rounded-2xl border p-5 shadow-sm transition-all duration-300 cursor-pointer ${
-            selectedLevel === 'បឋមសិក្សា'
-              ? 'bg-gradient-to-br from-blue-700 to-indigo-800 text-white border-blue-700 ring-2 ring-blue-500/10'
-              : 'bg-white hover:bg-slate-50 border-slate-100 text-slate-800'
-          }`}
-        >
-          <div className="absolute top-0 right-0 h-24 w-24 bg-blue-500/5 rounded-full -mr-6 -mt-6 transition-all duration-300 group-hover:scale-125" />
-          <div className="flex items-center justify-between mb-3">
-            <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${
-              selectedLevel === 'បឋមសិក្សា' ? 'bg-white text-blue-700' : 'bg-blue-50 text-blue-600'
-            }`}>
-              កម្រិតបឋមសិក្សា (Primary)
-            </span>
-            <Award className={`h-5 w-5 ${selectedLevel === 'បឋមសិក្សា' ? 'text-amber-300' : 'text-blue-400'}`} />
-          </div>
-          <div className="flex justify-between items-baseline">
-            <div>
-              <p className={`text-xs font-semibold ${selectedLevel === 'បឋមសិក្សា' ? 'text-blue-100' : 'text-slate-400'}`}>ចម្លើយស្ទង់មតិ</p>
-              <h4 className="text-2xl font-bold font-sans mt-1">{primaryCount} នាក់</h4>
-            </div>
-            <div className="text-right">
-              <p className={`text-xs font-semibold ${selectedLevel === 'បឋមសិក្សា' ? 'text-blue-100' : 'text-slate-400'}`}>ពិន្ទុមធ្យម</p>
-              <h4 className="text-lg font-bold font-sans mt-1">{primaryAvg} / 3.0</h4>
-            </div>
-          </div>
-          <p className={`text-[10px] mt-2 ${selectedLevel === 'បឋមសិក្សា' ? 'text-blue-200/80' : 'text-slate-400'}`}>
-            {selectedLevel === 'បឋមសិក្សា' ? '● កំពុងច្រោះបង្ហាញកម្រិតបឋមសិក្សា' : 'ចុចដើម្បីច្រោះមើលរបាយការណ៍បឋមសិក្សា'}
-          </p>
-        </div>
-      </div>
-
-      {/* Metrics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+          <div className="h-12 w-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
             <Users className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-slate-400 text-xs font-medium">ចំនួនចម្លើយស្ទង់មតិ</p>
-            <h4 className="text-2xl font-bold text-slate-800 font-sans mt-0.5">{totalCount} នាក់</h4>
+            <p className="text-sm text-slate-500 font-medium">សិស្សប្រឡងសរុប</p>
+            <p className="text-2xl font-bold text-slate-800">{totalCount} <span className="text-sm font-normal text-slate-400">នាក់</span></p>
           </div>
         </div>
-
-        <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+          <div className="h-12 w-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
             <Award className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-slate-400 text-xs font-medium">កម្រិតពេញចិត្តមធ្យម</p>
-            <h4 className="text-2xl font-bold text-slate-800 font-sans mt-0.5">{averageSatisfaction} / 3.0</h4>
+            <p className="text-sm text-slate-500 font-medium">ពិន្ទុមធ្យម</p>
+            <p className="text-2xl font-bold text-slate-800">{averageScore} / 10</p>
           </div>
         </div>
-
-        <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <ThumbsUp className="h-6 w-6" />
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+          <div className="h-12 w-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <CheckCircle className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-slate-400 text-xs font-medium">អត្រាពេញចិត្តសរុប</p>
-            <h4 className="text-2xl font-bold text-slate-800 font-sans mt-0.5">{satisfiedPercent}%</h4>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
-            <MessageSquare className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-slate-400 text-xs font-medium">អត្រាពេញចិត្តខ្លាំង</p>
-            <h4 className="text-2xl font-bold text-slate-800 font-sans mt-0.5">{verySatisfiedPercent}%</h4>
+            <p className="text-sm text-slate-500 font-medium">អត្រាជាប់</p>
+            <p className="text-2xl font-bold text-slate-800">{passedPercent}% <span className="text-sm font-normal text-slate-400">({passedCount} នាក់)</span></p>
           </div>
         </div>
       </div>
 
-      {/* Main Container tabs */}
-      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
-        <div className="bg-slate-50/50 border-b border-slate-100 px-6 py-4 flex items-center justify-between">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition ${
-                activeTab === 'analytics'
-                  ? 'bg-[#0f2a4a] text-amber-400 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+      {/* Filters and List */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row justify-between gap-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="ស្វែងរកឈ្មោះសិស្ស..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-full sm:w-64"
+              />
+            </div>
+            <select
+              value={selectedLevel}
+              onChange={(e) => setSelectedLevel(e.target.value as GradeLevel | 'ទាំងអស់')}
+              className="px-4 py-2 border border-slate-200 rounded-xl text-sm focus:border-blue-500 outline-none cursor-pointer bg-white"
             >
-              វិភាគលទ្ធផលទូទៅ (Visual Analytics)
+              <option value="ទាំងអស់">គ្រប់កម្រិតថ្នាក់</option>
+              <option value="ថ្នាក់ទី១">ថ្នាក់ទី១</option>
+              <option value="ថ្នាក់ទី២">ថ្នាក់ទី២</option>
+              <option value="ថ្នាក់ទី៣">ថ្នាក់ទី៣</option>
+              <option value="ថ្នាក់ទី៤">ថ្នាក់ទី៤</option>
+              <option value="ថ្នាក់ទី៥">ថ្នាក់ទី៥</option>
+              <option value="ថ្នាក់ទី៦">ថ្នាក់ទី៦</option>
+              <option value="ថ្នាក់ទី៧">ថ្នាក់ទី៧</option>
+              <option value="ថ្នាក់ទី៨">ថ្នាក់ទី៨</option>
+              <option value="ថ្នាក់ទី៩">ថ្នាក់ទី៩</option>
+              <option value="ថ្នាក់ទី១០">ថ្នាក់ទី១០</option>
+              <option value="ថ្នាក់ទី១១">ថ្នាក់ទី១១</option>
+              <option value="ថ្នាក់ទី១២">ថ្នាក់ទី១២</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-400 hover:bg-amber-300 text-[#0f2a4a] rounded-xl text-sm font-bold transition cursor-pointer shadow-sm"
+              title="បោះពុម្ពលទ្ធផលតាមថ្នាក់"
+            >
+              <Printer className="h-4 w-4" /> បោះពុម្ពតាមថ្នាក់
             </button>
             <button
-              onClick={() => setActiveTab('list')}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition ${
-                activeTab === 'list'
-                  ? 'bg-[#0f2a4a] text-amber-400 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              onClick={exportToCSV}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition cursor-pointer"
             >
-              បញ្ជីចម្លើយស្ទង់មតិ ({filteredResponses.length})
+              <FileDown className="h-4 w-4" /> ទាញយក CSV
             </button>
           </div>
         </div>
 
-        <div className="p-6">
-          {filteredResponses.length === 0 ? (
-            <div className="text-center py-12">
-              <AlertCircle className="h-12 w-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500 text-sm">មិនទាន់មានទិន្នន័យស្ទង់មតិត្រូវគ្នានឹងការជ្រើសរើសរបស់អ្នកនៅឡើយទេ។</p>
-            </div>
-          ) : activeTab === 'analytics' ? (
-            /* Visual Analytics Tab */
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {SURVEY_QUESTIONS.map(q => {
-                // Calculate score distribution for this question
-                const dist = { 1: 0, 2: 0, 3: 0 };
-                let qTotal = 0;
-                filteredResponses.forEach(r => {
-                  const rating = r.ratings[q.id];
-                  if (rating === 1 || rating === 2 || rating === 3) {
-                    dist[rating as 1 | 2 | 3]++;
-                    qTotal++;
-                  }
-                });
-
-                const percent1 = qTotal === 0 ? 0 : Math.round((dist[1] / qTotal) * 100);
-                const percent2 = qTotal === 0 ? 0 : Math.round((dist[2] / qTotal) * 100);
-                const percent3 = qTotal === 0 ? 0 : Math.round((dist[3] / qTotal) * 100);
-
-                return (
-                  <div key={q.id} className="p-4 rounded-xl border border-slate-100 space-y-3 bg-slate-50/50">
-                    <p className="text-xs font-bold text-slate-700 leading-relaxed min-h-[36px]">
-                      {q.text}
-                    </p>
-                    
-                    {/* SVG Progress bar representing the 1-3 distribution */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-[10px] text-slate-500">
-                        <span>មិនពេញចិត្ត 😞 ({dist[1]})</span>
-                        <span className="font-semibold">{percent1}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                        <div className="bg-red-400 h-full rounded-full transition-all duration-500" style={{ width: `${percent1}%` }} />
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-                        <span>ពេញចិត្ត 😐 ({dist[2]})</span>
-                        <span className="font-semibold">{percent2}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                        <div className="bg-amber-400 h-full rounded-full transition-all duration-500" style={{ width: `${percent2}%` }} />
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-                        <span>ពេញចិត្តណាស់ ☺ ({dist[3]})</span>
-                        <span className="font-semibold">{percent3}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${percent3}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            /* Submissions List Tab */
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 text-xs font-bold uppercase bg-slate-50">
-                    <th className="px-4 py-3">សិស្ស / អាណាព្យាបាល</th>
-                    <th className="px-4 py-3">កម្រិតសិក្សា</th>
-                    <th className="px-4 py-3">ថ្នាក់សិក្សា</th>
-                    <th className="px-4 py-3">គ្រូបន្ទុកថ្នាក់</th>
-                    <th className="px-4 py-3 text-center">ពិន្ទុមធ្យម</th>
-                    <th className="px-4 py-3">កំណត់សម្គាល់</th>
-                    <th className="px-4 py-3 text-center">សកម្មភាព</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                  {filteredResponses.map(r => {
-                    const avg = (() => {
-                      let s = 0;
-                      Object.values(r.ratings).forEach(v => s += v);
-                      return (s / 10).toFixed(1);
-                    })();
-
-                    return (
-                      <tr key={r.id} className="hover:bg-slate-50 transition duration-150">
-                        <td className="px-4 py-3.5">
-                          <p className="font-bold text-slate-800">{r.studentName}</p>
-                          <p className="text-[10px] text-slate-400">អាណាព្យាបាល៖ {r.parentName}</p>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${
-                            r.gradeLevel === 'មតេយ្យ' ? 'bg-orange-55 text-orange-600' : 'bg-blue-55 text-blue-600'
-                          }`}>
-                            {r.gradeLevel}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3.5 font-medium">{r.subGrade}</td>
-                        <td className="px-4 py-3.5">{r.teacherName}</td>
-                        <td className="px-4 py-3.5 text-center font-bold font-sans">
-                          <span className={`px-2 py-1 rounded-lg ${
-                            Number(avg) >= 2.5 ? 'text-emerald-700 bg-emerald-50' : 
-                            Number(avg) >= 1.8 ? 'text-amber-700 bg-amber-50' : 'text-red-700 bg-red-50'
-                          }`}>
-                            {avg}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          {r.teacherNotes ? (
-                            <span className="text-slate-500 line-clamp-1 italic max-w-[150px]">{r.teacherNotes}</span>
-                          ) : (
-                            <span className="text-slate-300 italic">គ្មានកំណត់សម្គាល់</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3.5 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <button
-                              onClick={() => openDetails(r)}
-                              className="px-2.5 py-1 text-[10px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 rounded-lg hover:bg-blue-100 transition cursor-pointer"
-                            >
-                              លម្អិត
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (confirm('តើអ្នកពិតជាចង់លុបចម្លើយនេះមែនទេ?')) {
-                                  onDeleteResponse(r.id);
-                                }
-                              }}
-                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Slide-over Detailed Modal */}
-      <AnimatePresence>
-        {detailedResponse && (
-          <div className="fixed inset-0 z-50 overflow-hidden flex justify-end">
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.4 }}
-              exit={{ opacity: 0 }}
-              onClick={closeDetails}
-              className="absolute inset-0 bg-black cursor-pointer"
-            />
-
-            {/* Modal Body */}
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="relative w-full max-w-2xl bg-white h-full shadow-xl flex flex-col z-10 overflow-y-auto"
-            >
-              {/* Header */}
-              <div className="bg-[#0f2a4a] text-white p-6 flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold font-sans text-amber-400">ព័ត៌មានលម្អិតអំពីការវាយតម្លៃ</h3>
-                  <p className="text-xs text-slate-300 mt-0.5">សិស្ស៖ {detailedResponse.studentName} | ថ្នាក់សិក្សា៖ {detailedResponse.subGrade}</p>
-                </div>
-                <button
-                  onClick={closeDetails}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 rounded-lg transition cursor-pointer"
-                >
-                  បិទវិញ
-                </button>
+        {/* Printable Class Results Container */}
+        <div className={`space-y-4 ${detailedResult ? 'no-print' : 'print-content'}`}>
+          {/* Printable Header for Class Results */}
+          <div className="hidden print:block mb-4 p-4 border-b text-center">
+            {schoolLogo && (
+              <div className="flex justify-center mb-2">
+                <img src={schoolLogo} alt="School Logo" className="h-16 w-16 object-contain" />
               </div>
+            )}
+            <h1 className="text-base font-bold text-slate-900 tracking-wide">ព្រះរាជាណាចក្រកម្ពុជា</h1>
+            <h2 className="text-sm font-bold text-slate-800 tracking-wider">ជាតិ សាសនា ព្រះមហាក្សត្រ</h2>
+            <div className="w-20 h-0.5 bg-slate-800 mx-auto my-1"></div>
+            <h2 className="text-lg font-bold text-[#0f2a4a] mt-2">បញ្ជីលទ្ធផលប្រឡងមុខវិជ្ជាកុំព្យូទ័រ</h2>
+            <p className="text-center text-sm text-slate-700 mt-1">
+              កម្រិតថ្នាក់៖ <strong className="text-blue-900">{selectedLevel}</strong> | ចំនួនសិស្សសរុប៖ <strong>{totalCount} នាក់</strong> | កាលបរិច្ឆេទ៖ {new Date().toLocaleDateString('km-KH')}
+            </p>
+          </div>
 
-              {/* Content body */}
-              <div className="p-6 space-y-6 flex-1">
-                {/* General Info Grid */}
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 grid grid-cols-2 gap-4 text-xs">
-                  <div>
-                    <span className="text-slate-400 block mb-0.5">ឈ្មោះអាណាព្យាបាល</span>
-                    <strong className="text-slate-800 text-sm">{detailedResponse.parentName}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block mb-0.5">ឈ្មោះសិស្ស (ភេទ)</span>
-                    <strong className="text-slate-800 text-sm">{detailedResponse.studentName} ({detailedResponse.studentGender})</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block mb-0.5">គ្រូបន្ទុកថ្នាក់</span>
-                    <strong className="text-slate-800 text-sm">{detailedResponse.teacherName}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block mb-0.5">កាលបរិច្ឆេទឆ្លើយតប</span>
-                    <strong className="text-slate-800 text-sm flex items-center gap-1.5">
-                      <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                      {detailedResponse.date}
-                    </strong>
-                  </div>
-                </div>
-
-                {/* Question and Answers List */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">ចម្លើយតបតាមសំណួរនីមួយៗ</h4>
-                  <div className="space-y-2 max-h-[220px] overflow-y-auto border border-slate-100 rounded-xl p-3 bg-white">
-                    {SURVEY_QUESTIONS.map(q => {
-                      const score = detailedResponse.ratings[q.id];
-                      const getLabel = (s: number) => {
-                        if (s === 1) return { emoji: '😞', text: 'មិនពេញចិត្ត', style: 'bg-red-50 text-red-700' };
-                        if (s === 2) return { emoji: '😐', text: 'ពេញចិត្ត', style: 'bg-amber-50 text-amber-700' };
-                        return { emoji: '☺', text: 'ពេញចិត្តណាស់', style: 'bg-emerald-50 text-emerald-700' };
-                      };
-                      const val = getLabel(score);
-
-                      return (
-                        <div key={q.id} className="flex items-start justify-between gap-4 p-2 rounded-lg border border-slate-50 hover:bg-slate-50/50 transition text-[11px]">
-                          <span className="text-slate-700 leading-relaxed font-medium">{q.text}</span>
-                          <span className={`px-2.5 py-1 rounded-full shrink-0 font-bold flex items-center gap-1 ${val.style}`}>
-                            <span>{val.emoji}</span>
-                            <span>{score}</span>
-                          </span>
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-100">
+                <tr>
+                  <th className="px-4 py-3">ឈ្មោះសិស្ស</th>
+                  <th className="px-4 py-3">កម្រិតថ្នាក់</th>
+                  <th className="px-4 py-3 text-center">ពិន្ទុ</th>
+                  <th className="px-4 py-3">កាលបរិច្ឆេទ</th>
+                  <th className="px-4 py-3 text-right no-print">សកម្មភាព</th>
+                </tr>
+              </thead>
+            <tbody className="divide-y divide-slate-100">
+              <AnimatePresence>
+                {filteredResults.length > 0 ? (
+                  filteredResults.map(r => (
+                    <motion.tr
+                      key={r.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      onClick={() => openDetails(r)}
+                      className="hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-800">{r.studentName}</div>
+                        <div className="text-xs text-slate-400">ភេទ៖ {r.studentGender}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex px-2 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                          {r.gradeLevel}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`font-bold ${r.totalScore === 0 ? 'text-blue-600' : (r.score / r.totalScore) >= 0.5 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {r.totalScore === 0 ? 'រង់ចាំ' : `${r.score} / ${r.totalScore}`}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">
+                        <div className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" /> {r.date}
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Additional Comments from Parent */}
-                {detailedResponse.additionalComments && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">មតិយោបល់បន្ថែមពីអាណាព្យាបាល</h4>
-                    <div className="p-3.5 bg-slate-50 rounded-xl text-xs leading-relaxed text-slate-700 italic border-l-4 border-slate-400">
-                      "{detailedResponse.additionalComments}"
-                    </div>
-                  </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2 no-print">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDetails(r);
+                              setTimeout(() => window.print(), 300);
+                            }}
+                            className="px-2.5 py-1.5 text-xs font-semibold bg-amber-50 text-amber-800 hover:bg-amber-100 rounded-lg transition border border-amber-200 cursor-pointer flex items-center gap-1"
+                            title="បោះពុម្ពក្រដាសប្រឡងសិស្ស"
+                          >
+                            <Printer className="h-3.5 w-3.5" /> បោះពុម្ព
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDetails(r);
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg transition border border-blue-200 cursor-pointer flex items-center gap-1"
+                          >
+                            លម្អិត
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm("តើអ្នកពិតជាចង់លុបទិន្នន័យនេះមែនទេ?")) {
+                                onDeleteResult(r.id);
+                              }
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition border border-red-200 cursor-pointer flex items-center gap-1"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> លុប
+                          </button>
+                        </div>
+                      </td>
+                    </motion.tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                      មិនមានទិន្នន័យត្រូវគ្នានឹងការស្វែងរករបស់អ្នកទេ
+                    </td>
+                  </tr>
                 )}
+              </AnimatePresence>
+            </tbody>
+          </table>
+        </div>
 
-                {/* Teacher Notes / Remarks */}
-                <div className="space-y-2 pt-4 border-t border-slate-100">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                      កំណត់សម្គាល់សម្រាប់សិស្សម្នាក់ៗ (Teacher's Notes)
-                    </h4>
-                    <button
-                      onClick={saveTeacherNotes}
-                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-[10px] text-white font-bold rounded-lg transition shadow-sm cursor-pointer"
-                    >
-                      រក្សាទុកកំណត់សម្គាល់
-                    </button>
-                  </div>
-                  <textarea
-                    value={teacherNotesEdit}
-                    onChange={e => setTeacherNotesEdit(e.target.value)}
-                    rows={3}
-                    placeholder="សរសេរកំណត់សម្គាល់ពិសេសរបស់សិស្សម្នាក់នេះ ឬចំណាំផ្សេងៗដើម្បីងាយស្រួលគ្រប់គ្រង..."
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-800 text-xs outline-none"
-                  />
-                </div>
+        {/* Official Signature Section for Class List Print Template */}
+        <div className="hidden print:grid grid-cols-2 gap-8 text-xs text-center mt-12 pt-6 border-t border-slate-300">
+          <div>
+            <p className="font-bold text-slate-800">បានឃើញ និងពិនិត្យត្រឹមត្រូវ</p>
+            <p className="font-semibold text-slate-600 mt-1">នាយក/នាយិកាសាលា</p>
+            <div className="h-16"></div>
+            <p className="text-slate-400">( ហត្ថលេខា និង ត្រា )</p>
+          </div>
+          <div>
+            <p className="text-slate-600">ថ្ងៃទី........ ខែ........ ឆ្នាំ២០....</p>
+            <p className="font-bold text-slate-800 mt-1">គ្រូបង្រៀនទទួលបន្ទុក</p>
+            <div className="h-16"></div>
+            <p className="text-slate-400">( ហត្ថលេខា និង ឈ្មោះ )</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </>
+)}
 
-                {/* Gemini AI Recommendations Section */}
-                <div className="space-y-3 pt-4 border-t border-slate-100">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                      <Sparkles className="h-4 w-4 text-purple-600 animate-pulse" />
-                      ជំនួយការសិក្សា AI (Gemini ជំនួយការគរុកោសល្យ)
-                    </h4>
-                    <button
-                      onClick={analyzeWithAI}
-                      disabled={isAnalyzing}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 text-[10px] font-bold text-white rounded-lg transition shadow-md cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      {isAnalyzing ? (
-                        <>
-                          <div className="animate-spin h-3 w-3 border border-white border-t-transparent rounded-full" />
-                          កំពុងវិភាគ...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-3 w-3" />
-                          វិភាគជាមួយ Gemini AI
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {detailedResponse.aiRecommendation ? (
-                    <div className="p-4 bg-purple-50/50 rounded-xl border border-purple-100 space-y-3 relative">
-                      <div className="flex justify-between items-start">
-                        <span className="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full font-bold">វិភាគរួចរាល់</span>
-                        <button
-                          onClick={copyAiText}
-                          className="p-1 hover:bg-purple-100 rounded-lg text-purple-700 transition"
-                          title="Copy AI analysis"
-                        >
-                          {copiedAi ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                      <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
-                        {detailedResponse.aiRecommendation}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center text-slate-400 text-xs">
-                      ចុចប៊ូតុង "វិភាគជាមួយ Gemini AI" ដើម្បីឲ្យ AI ជំនាញវិភាគលើចម្លើយស្ទង់មតិ និងបង្កើតផែនការគាំទ្រសិស្សម្នាក់នេះ។
+      {/* Detail Modal */}
+      <AnimatePresence>
+        {detailedResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm no-print"
+              onClick={closeDetails}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col relative z-10 border border-slate-200 print-content print:max-h-none print:shadow-none print:border-none"
+            >
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 sticky top-0 z-20 print:bg-white print:border-b-2 print:border-slate-800 print:p-0 print:mb-6">
+                <div className="hidden print:block text-center w-full mb-4">
+                  {schoolLogo && (
+                    <div className="flex justify-center mb-2">
+                      <img src={schoolLogo} alt="School Logo" className="h-16 w-16 object-contain" />
                     </div>
                   )}
+                  <h1 className="text-base font-bold text-slate-900 tracking-wide">ព្រះរាជាណាចក្រកម្ពុជា</h1>
+                  <h2 className="text-sm font-bold text-slate-800 tracking-wider">ជាតិ សាសនា ព្រះមហាក្សត្រ</h2>
+                  <div className="w-20 h-0.5 bg-slate-800 mx-auto my-1"></div>
+                  <h2 className="text-lg font-bold text-[#0f2a4a] mt-2">លទ្ធផលប្រឡងសិស្សម្នាក់ៗ - មុខវិជ្ជាកុំព្យូទ័រ</h2>
+                </div>
+                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2 print:hidden">
+                  <Award className="h-5 w-5 text-amber-500 print:hidden" />
+                  លទ្ធផលប្រឡងលម្អិត
+                </h3>
+                <div className="flex items-center gap-2 no-print">
+                  <button
+                    onClick={() => window.print()}
+                    className="p-1.5 px-3 rounded-lg bg-amber-400 hover:bg-amber-300 text-[#0f2a4a] font-bold text-xs transition cursor-pointer flex items-center gap-1 shadow-sm"
+                  >
+                    <Printer className="h-4 w-4" /> បោះពុម្ព
+                  </button>
+                  <button
+                    onClick={() => {
+                      onDeleteResult(detailedResult.id);
+                      closeDetails();
+                    }}
+                    className="p-1.5 px-3 rounded-lg hover:bg-rose-100 text-rose-600 font-bold text-xs transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Trash2 className="h-4 w-4" /> លុប
+                  </button>
+                  <button 
+                    onClick={closeDetails}
+                    className="p-1.5 rounded-full hover:bg-slate-200 text-slate-400 transition cursor-pointer"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-white print:overflow-visible print:p-0">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4 print:border print:border-slate-300 print:p-3 print:rounded-lg">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 print:bg-white print:border-none">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5 print:text-slate-600">ឈ្មោះសិស្ស</p>
+                    <p className="font-semibold text-slate-800">{detailedResult.studentName}</p>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 print:bg-white print:border-none">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5 print:text-slate-600">ថ្នាក់</p>
+                    <p className="font-semibold text-slate-800">{detailedResult.gradeLevel}</p>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 print:bg-white print:border-none">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5 print:text-slate-600">កាលបរិច្ឆេទ</p>
+                    <p className="font-semibold text-slate-800">{detailedResult.date}</p>
+                  </div>
+                  <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 print:bg-white print:border-none">
+                    <p className="text-[10px] uppercase tracking-wider text-blue-400 font-bold mb-0.5 print:text-slate-600">ពិន្ទុសរុប</p>
+                    <p className={`font-bold text-lg ${detailedResult.totalScore === 0 ? 'text-blue-600' : (detailedResult.score / detailedResult.totalScore) >= 0.5 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {detailedResult.totalScore === 0 ? 'រង់ចាំការវាយតម្លៃ' : `${detailedResult.score} / ${detailedResult.totalScore}`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-bold text-sm text-slate-700">មតិយោបល់របស់គ្រូ / Teacher Notes</h4>
+                  <textarea
+                    value={teacherNotesEdit}
+                    onChange={(e) => setTeacherNotesEdit(e.target.value)}
+                    placeholder="បញ្ចូលការកត់សម្គាល់ ឬចំណុចខ្សោយរបស់សិស្សនៅទីនេះ..."
+                    className="w-full h-24 p-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none resize-none print:hidden"
+                  />
+                  <div className="hidden print:block p-3 border border-slate-300 rounded-lg min-h-[60px] text-xs text-slate-800">
+                    {teacherNotesEdit || "(មិនមានការកត់សម្គាល់)"}
+                  </div>
+                  <button
+                    onClick={saveTeacherNotes}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition cursor-pointer no-print"
+                  >
+                    រក្សាទុកកំណត់សម្គាល់
+                  </button>
+                </div>
+
+                {/* Exam Questions & Student Answers breakdown (វិញ្ញាសា និងចម្លើយ) */}
+                <div className="space-y-4 pt-4 border-t border-slate-200">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="font-bold text-sm text-[#0f2a4a] flex items-center gap-2">
+                      <FileText className="h-4.5 w-4.5 text-amber-500" />
+                      វិញ្ញាសាប្រឡង និងចម្លើយរបស់សិស្ស (Exam Questions & Student Answers)
+                    </h4>
+                    {!loadingQuestions && detailedQuestions.length > 0 && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold flex items-center gap-1">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                          ត្រូវ {detailedQuestions.filter(q => {
+                            const ans = detailedResult.answers ? (detailedResult.answers[q.id] ?? detailedResult.answers[String(q.id)]) : undefined;
+                            return q.type !== 'essay' && ans !== undefined && String(ans).trim().toLowerCase() === String(q.correctAnswer || '').trim().toLowerCase();
+                          }).length}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-bold flex items-center gap-1">
+                          <XCircle className="h-3.5 w-3.5 text-rose-600" />
+                          ខុស {detailedQuestions.filter(q => {
+                            const ans = detailedResult.answers ? (detailedResult.answers[q.id] ?? detailedResult.answers[String(q.id)]) : undefined;
+                            return q.type !== 'essay' && (ans === undefined || String(ans).trim().toLowerCase() !== String(q.correctAnswer || '').trim().toLowerCase());
+                          }).length}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold">
+                          សរុប {detailedQuestions.length} សំណួរ
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {loadingQuestions ? (
+                    <div className="p-8 text-center text-slate-500 flex items-center justify-center gap-2 bg-slate-50 rounded-2xl border border-slate-100">
+                      <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+                      <span className="text-xs font-semibold">កំពុងទាញយកទិន្នន័យវិញ្ញាសា...</span>
+                    </div>
+                  ) : detailedQuestions.length === 0 ? (
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-slate-500 text-xs">
+                      {detailedResult.answers && Object.keys(detailedResult.answers).length > 0 ? (
+                        <div className="space-y-2">
+                          <p className="font-bold text-slate-700 mb-2">ចម្លើយដែលសិស្សបានជ្រើសរើស៖</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {Object.entries(detailedResult.answers).map(([qKey, ansVal]) => (
+                              <div key={qKey} className="p-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                                <span className="font-bold text-slate-600 text-[11px]">សំណួរ #{qKey}:</span>
+                                <span className="font-semibold text-slate-800 text-xs">{String(ansVal)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-center">មិនមានទិន្នន័យវិញ្ញាសាសម្រាប់កម្រិតថ្នាក់នេះទេ</p>
+                      )}
+                    </div>
+                  ) : (
+                    /* Scrollable questions list focusing cleanly on question text and student's answer */
+                    <div className="max-h-[450px] overflow-y-auto pr-1.5 space-y-3 print:max-h-none print:overflow-visible print:pr-0">
+                      {detailedQuestions.map((q, idx) => {
+                        const rawStudentAns = detailedResult.answers ? (detailedResult.answers[q.id] ?? detailedResult.answers[String(q.id)]) : undefined;
+                        const studentAnsStr = rawStudentAns !== undefined && rawStudentAns !== null ? String(rawStudentAns).trim() : '';
+                        const correctAnsStr = String(q.correctAnswer || '').trim();
+                        const isEssay = q.type === 'essay';
+                        const isCorrect = !isEssay && studentAnsStr.length > 0 && studentAnsStr.toLowerCase() === correctAnsStr.toLowerCase();
+
+                        return (
+                          <div 
+                            key={q.id || idx} 
+                            className={`p-4 rounded-2xl border transition-all text-xs space-y-2.5 print:bg-white print:border-slate-300 ${
+                              isEssay 
+                                ? 'bg-slate-50/80 border-slate-200' 
+                                : isCorrect 
+                                  ? 'bg-emerald-50/60 border-emerald-300 shadow-xs' 
+                                  : 'bg-rose-50/60 border-rose-300 shadow-xs'
+                            }`}
+                          >
+                            {/* Question Header & Correct/Incorrect Badge */}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-2.5">
+                                <span className={`h-6 w-6 rounded-lg text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                                  isEssay
+                                    ? 'bg-slate-200 text-slate-700'
+                                    : isCorrect
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-rose-600 text-white'
+                                }`}>
+                                  {idx + 1}
+                                </span>
+                                <p className="font-bold text-[#0f2a4a] text-xs sm:text-sm leading-snug">
+                                  {q.text}
+                                </p>
+                              </div>
+
+                              {!isEssay && (
+                                <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 flex items-center gap-1 shadow-xs ${
+                                  isCorrect 
+                                    ? 'bg-emerald-600 text-white border border-emerald-700' 
+                                    : 'bg-rose-600 text-white border border-rose-700'
+                                }`}>
+                                  {isCorrect ? (
+                                    <>
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                      <span>ត្រឹមត្រូវ</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <XCircle className="h-3.5 w-3.5" />
+                                      <span>មិនត្រឹមត្រូវ</span>
+                                    </>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Clean summary boxes: Student Answer vs Correct Answer */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 pl-8">
+                              <div className={`p-2.5 rounded-xl border ${
+                                isEssay
+                                  ? 'bg-white border-slate-200'
+                                  : isCorrect
+                                    ? 'bg-emerald-100/90 border-emerald-300 text-emerald-950'
+                                    : 'bg-rose-100/90 border-rose-300 text-rose-950'
+                              }`}>
+                                <span className={`text-[10px] font-bold block mb-0.5 ${
+                                  isEssay ? 'text-slate-400' : isCorrect ? 'text-emerald-800' : 'text-rose-800'
+                                }`}>
+                                  ចម្លើយសិស្ស (Student's Answer):
+                                </span>
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className={`font-bold text-xs sm:text-sm ${studentAnsStr ? 'text-slate-900' : 'text-rose-600 italic font-semibold'}`}>
+                                    {studentAnsStr || '(មិនបានឆ្លើយ / Unanswered)'}
+                                  </span>
+                                  {!isEssay && studentAnsStr && (
+                                    isCorrect ? (
+                                      <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                                    ) : (
+                                      <XCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                                    )
+                                  )}
+                                </div>
+                              </div>
+
+                              {!isEssay && (
+                                <div className="p-2.5 bg-emerald-100/90 rounded-xl border border-emerald-300 text-emerald-950">
+                                  <span className="text-[10px] text-emerald-800 font-bold block mb-0.5">
+                                    ចម្លើយត្រឹមត្រូវ (Correct Answer):
+                                  </span>
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-bold text-xs sm:text-sm text-slate-900">
+                                      {q.correctAnswer}
+                                    </span>
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Printable Signature Block for Teacher */}
+                <div className="hidden print:grid grid-cols-2 gap-8 text-xs text-center mt-10 pt-4 border-t border-slate-300">
+                  <div>
+                    <p className="font-bold text-slate-800">សិស្សសាម៉ី</p>
+                    <div className="h-16"></div>
+                    <p className="font-semibold text-slate-700">{detailedResult.studentName}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-600">ថ្ងៃទី........ ខែ........ ឆ្នាំ២០....</p>
+                    <p className="font-bold text-slate-800 mt-1">គ្រូបង្រៀនទទួលបន្ទុក</p>
+                    <div className="h-12"></div>
+                    <p className="text-slate-400">( ហត្ថលេខា និង ឈ្មោះ )</p>
+                  </div>
                 </div>
               </div>
             </motion.div>

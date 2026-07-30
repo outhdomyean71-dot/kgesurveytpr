@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User profile documents",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "plan": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email"]
+    },
+    "users/{uid}/folders": {
+      "title": "Folders",
+      "description": "Folders for organizing user files",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "users/{uid}/files": {
+      "title": "Files",
+      "description": "File metadata records",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "downloadURL": { "type": "string" },
+        "type": { "type": "string" },
+        "folderId": { "type": "string" },
+        "size": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "users/{uid}/notes": {
+      "title": "Notes",
+      "description": "Personal notes",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title"]
+    },
+    "users/{uid}/teamMembers": {
+      "title": "Team Members",
+      "description": "Team member records",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    }
+  }
+}

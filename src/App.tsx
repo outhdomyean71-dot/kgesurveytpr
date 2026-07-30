@@ -4,95 +4,101 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { SurveyResponse, GradeLevel, GoogleSheetsConfig } from './types';
-import SurveyFormView from './components/SurveyFormView';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
+import { ExamResult, GradeLevel, GoogleSheetsConfig, ExamQuestion } from './types';
+import ExamFormView from './components/ExamFormView';
 import DashboardView from './components/DashboardView';
 import AppsScriptView from './components/AppsScriptView';
+import QuestionsManagerView from './components/QuestionsManagerView';
+import AuthView from './components/AuthView';
 import { 
   FileSpreadsheet, ClipboardList, Database, Key, HelpCircle, 
-  Settings, Check, X, Sparkles, AlertCircle 
+  Settings, Check, X, Sparkles, AlertCircle, MonitorPlay,
+  BookOpen, Upload, Image as ImageIcon, Trash2, LogOut, User as UserIcon
 } from 'lucide-react';
-
-const INITIAL_RESPONSES: SurveyResponse[] = [
-  {
-    id: "1",
-    studentName: "សុខ មុន្នី",
-    studentGender: "ប្រុស",
-    gradeLevel: "បឋមសិក្សា",
-    subGrade: "ថ្នាក់ទី១",
-    teacherName: "អ្នកគ្រូ សូភី",
-    parentName: "សុខ ផល្លា",
-    date: "2026-07-10",
-    ratings: { 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 3, 8: 3, 9: 3, 10: 2 },
-    additionalComments: "គ្រូបន្ទុកថ្នាក់យកចិត្តទុកដាក់បង្រៀនល្អណាស់ កូនខ្ញុំរីកចម្រើនច្រើនផ្នែកសីលធម៌ និងការអាន។",
-    teacherNotes: "សិស្សរហ័សរហួន និងស្តាប់បង្គាប់ល្អ។",
-    createdAt: "2026-07-10T10:00:00.000Z"
-  },
-  {
-    id: "2",
-    studentName: "លី ដារ៉ា",
-    studentGender: "ប្រុស",
-    gradeLevel: "បឋមសិក្សា",
-    subGrade: "ថ្នាក់ទី៣",
-    teacherName: "លោកគ្រូ វណ្ណា",
-    parentName: "លី ហួ",
-    date: "2026-07-12",
-    ratings: { 1: 2, 2: 2, 3: 3, 4: 2, 5: 3, 6: 1, 7: 2, 8: 2, 9: 3, 10: 1 },
-    additionalComments: "សំណូមពរឱ្យលោកគ្រូជួយផ្ញើកិច្ចការផ្ទះក្នុងគ្រុបតេឡេក្រាមឱ្យបានលឿនបន្តិច ព្រោះពេលខ្លះយប់ពេកពិបាកបង្រៀនកូន។",
-    teacherNotes: "ត្រូវបង្កើនការទំនាក់ទំនងជាមួយអាណាព្យាបាលសិស្សបន្ថែម។",
-    createdAt: "2026-07-12T14:30:00.000Z"
-  },
-  {
-    id: "3",
-    studentName: "គឹម សុជាតា",
-    studentGender: "ស្រី",
-    gradeLevel: "មតេយ្យ",
-    subGrade: "មតេយ្យកម្រិតខ្ពស់ (Kindergarten)",
-    teacherName: "អ្នកគ្រូ ចិន្តា",
-    parentName: "ជា សុខឃីម",
-    date: "2026-07-15",
-    ratings: { 1: 3, 2: 3, 3: 2, 4: 3, 5: 3, 6: 3, 7: 3, 8: 3, 9: 3, 10: 3 },
-    additionalComments: "ពេញចិត្តខ្លាំងណាស់ចំពោះសកម្មភាពបំណិនជីវិត និងការលេងកម្សាន្តរបស់កូនៗ។",
-    teacherNotes: "ចូលចិត្តលេងជាមួយមិត្តភក្តិ និងរួសរាយ។",
-    createdAt: "2026-07-15T09:15:00.000Z"
-  }
-];
+import { SOVANNAPHUMI_LOGO_DATA_URL } from './assets/sovannaphumiLogo';
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'survey' | 'dashboard' | 'script'>('dashboard');
-  const [responses, setResponses] = useState<SurveyResponse[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [activeView, setActiveView] = useState<'survey' | 'dashboard' | 'script' | 'questions'>('dashboard');
+  const [results, setResults] = useState<ExamResult[]>([]);
   const [webAppUrl, setWebAppUrl] = useState('');
+  const [schoolLogo, setSchoolLogo] = useState(SOVANNAPHUMI_LOGO_DATA_URL);
   const [showSettings, setShowSettings] = useState(false);
   const [tempUrl, setTempUrl] = useState('');
+  const [tempLogo, setTempLogo] = useState(SOVANNAPHUMI_LOGO_DATA_URL);
   const [settingsSaved, setSettingsSaved] = useState(false);
-  const [isParentView, setIsParentView] = useState(false);
+  const [isStudentView, setIsStudentView] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+
+  // Listen for Firebase Auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user && !user.emailVerified) {
+        await signOut(auth);
+        setCurrentUser(null);
+      } else {
+        setCurrentUser(user);
+        if (user) {
+          try {
+            const userRef = doc(db, 'users', user.uid);
+            const snap = await getDoc(userRef);
+            if (!snap.exists()) {
+              await setDoc(userRef, {
+                displayName: user.displayName || user.email?.split('@')[0] || 'User',
+                email: user.email || '',
+                plan: 'Pro Plan',
+                createdAt: new Date().toISOString()
+              }, { merge: true });
+            }
+          } catch (e) {
+            console.warn('Error syncing user profile to Firestore:', e);
+          }
+        }
+      }
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Load configuration and check URL params
   useEffect(() => {
-    const savedUrl = localStorage.getItem('sovannaphumi_sheets_webapp_url');
+    const savedUrl = localStorage.getItem('computer_exam_sheets_webapp_url');
     if (savedUrl) {
       setWebAppUrl(savedUrl);
       setTempUrl(savedUrl);
     }
 
+    const savedLogo = localStorage.getItem('computer_exam_school_logo');
+    if (savedLogo && savedLogo.startsWith('data:image')) {
+      setSchoolLogo(savedLogo);
+      setTempLogo(savedLogo);
+    } else {
+      setSchoolLogo(SOVANNAPHUMI_LOGO_DATA_URL);
+      setTempLogo(SOVANNAPHUMI_LOGO_DATA_URL);
+    }
+
     const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'parent' || params.get('role') === 'parent') {
-      setIsParentView(true);
+    if (params.get('mode') === 'student' || params.get('role') === 'student') {
+      setIsStudentView(true);
       setActiveView('survey');
     }
   }, []);
 
   // Function to load responses from backend Express server
-  const fetchResponsesFromServer = async () => {
+  const fetchResultsFromServer = async () => {
     try {
-      const res = await fetch('/api/responses');
+      const res = await fetch('/api/results');
       if (res.ok) {
         const data = await res.json();
-        setResponses(data);
+        setResults(data);
       }
     } catch (err) {
-      console.error('Failed to load responses from server:', err);
+      console.error('Failed to load results from server:', err);
     } finally {
       setIsLoading(false);
     }
@@ -100,39 +106,66 @@ export default function App() {
 
   // Load and poll state from server
   useEffect(() => {
-    fetchResponsesFromServer();
+    fetchResultsFromServer();
 
     // Set up polling for real-time updates when on dashboard
     let interval: NodeJS.Timeout | null = null;
-    if (activeView === 'dashboard' && !isParentView) {
+    if (activeView === 'dashboard' && !isStudentView) {
       interval = setInterval(() => {
-        fetchResponsesFromServer();
+        fetchResultsFromServer();
       }, 5000); // 5 seconds polling
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [activeView, isParentView]);
+  }, [activeView, isStudentView]);
 
   // Submit hander
-  const handleSurveySubmit = async (newSurvey: Omit<SurveyResponse, 'id' | 'createdAt' | 'teacherNotes'>) => {
-    const createdResponse = {
-      ...newSurvey,
+  const handleExamSubmit = async (newExam: Omit<ExamResult, 'id' | 'createdAt' | 'teacherNotes'>) => {
+    let calculatedScore = 0;
+    let calculatedTotalScore = 0;
+
+    try {
+      const qRes = await fetch(`/api/questions?gradeLevel=${newExam.gradeLevel}`);
+      if (qRes.ok) {
+        const questions: ExamQuestion[] = await qRes.json();
+        
+        questions.forEach(q => {
+          const studentAnswer = (newExam.answers[q.id] || '').toString().trim().toLowerCase();
+          const correctAnswer = (q.correctAnswer || '').toString().trim().toLowerCase();
+          const points = q.points || 1;
+          
+          if (q.type !== 'essay') {
+            calculatedTotalScore += points;
+            if (studentAnswer === correctAnswer) {
+              calculatedScore += points;
+            }
+          }
+        });
+      }
+    } catch (err) {
+      console.error("Failed to fetch questions for scoring", err);
+    }
+
+    const createdResult = {
+      ...newExam,
+      score: calculatedScore,
+      totalScore: calculatedTotalScore,
       teacherNotes: '',
       createdAt: new Date().toISOString()
     };
 
     try {
-      const res = await fetch('/api/responses', {
+      const res = await fetch('/api/results', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createdResponse)
+        body: JSON.stringify(createdResult)
       });
       
       if (res.ok) {
         const result = await res.json();
-        setResponses(prev => [result.data, ...prev]);
+        setResults(prev => [result.data, ...prev]);
         
         // If Google Sheet Web App URL is configured, push to Google Sheets automatically!
         if (webAppUrl) {
@@ -149,69 +182,92 @@ export default function App() {
             console.error("Failed to sync with Google Sheet:", err);
           }
         }
-        return true;
+        return { success: true, score: calculatedScore, total: calculatedTotalScore };
       }
     } catch (err) {
-      console.error("Failed to save survey to server:", err);
+      console.error("Failed to save exam to server:", err);
     }
 
     // Fallback if server API is unavailable
     const id = Date.now().toString();
-    const fallbackResponse: SurveyResponse = {
-      ...createdResponse,
+    const fallbackResult: ExamResult = {
+      ...createdResult,
       id,
     };
-    const updatedList = [fallbackResponse, ...responses];
-    setResponses(updatedList);
-    localStorage.setItem('sovannaphumi_survey_responses', JSON.stringify(updatedList));
-    return true;
+    const updatedList = [fallbackResult, ...results];
+    setResults(updatedList);
+    localStorage.setItem('computer_exam_results', JSON.stringify(updatedList));
+    return { success: true, score: calculatedScore, total: calculatedTotalScore };
   };
 
-  const handleUpdateResponse = async (updated: SurveyResponse) => {
+  const handleUpdateResult = async (updated: ExamResult) => {
     try {
-      const res = await fetch(`/api/responses/${updated.id}`, {
+      const res = await fetch(`/api/results/${updated.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
       });
       if (res.ok) {
         const result = await res.json();
-        setResponses(prev => prev.map(r => r.id === result.data.id ? result.data : r));
+        setResults(prev => prev.map(r => r.id === result.data.id ? result.data : r));
         return;
       }
     } catch (err) {
-      console.error("Failed to update response on server:", err);
+      console.error("Failed to update result on server:", err);
     }
 
     // Fallback
-    const updatedList = responses.map(r => r.id === updated.id ? updated : r);
-    setResponses(updatedList);
-    localStorage.setItem('sovannaphumi_survey_responses', JSON.stringify(updatedList));
+    const updatedList = results.map(r => r.id === updated.id ? updated : r);
+    setResults(updatedList);
+    localStorage.setItem('computer_exam_results', JSON.stringify(updatedList));
   };
 
-  const handleDeleteResponse = async (id: string) => {
+  const handleDeleteResult = async (id: string) => {
     try {
-      const res = await fetch(`/api/responses/${id}`, {
+      const res = await fetch(`/api/results/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
-        setResponses(prev => prev.filter(r => r.id !== id));
+        setResults(prev => prev.filter(r => r.id !== id));
         return;
       }
     } catch (err) {
-      console.error("Failed to delete response on server:", err);
+      console.error("Failed to delete result on server:", err);
     }
 
     // Fallback
-    const updatedList = responses.filter(r => r.id !== id);
-    setResponses(updatedList);
-    localStorage.setItem('sovannaphumi_survey_responses', JSON.stringify(updatedList));
+    const updatedList = results.filter(r => r.id !== id);
+    setResults(updatedList);
+    localStorage.setItem('computer_exam_results', JSON.stringify(updatedList));
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert('ទំហំរូបភាពធំពេក! សូមជ្រើសរើសរូបភាពដែលមានទំហំក្រោម 2MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setTempLogo(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveLogo = () => {
+    setTempLogo('');
   };
 
   const saveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     setWebAppUrl(tempUrl);
-    localStorage.setItem('sovannaphumi_sheets_webapp_url', tempUrl);
+    setSchoolLogo(tempLogo);
+    localStorage.setItem('computer_exam_sheets_webapp_url', tempUrl);
+    localStorage.setItem('computer_exam_school_logo', tempLogo);
     setSettingsSaved(true);
     setTimeout(() => {
       setSettingsSaved(false);
@@ -222,86 +278,134 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* Top Main Navigation Header */}
-      {!isParentView ? (
+      {!isStudentView ? (
         <header className="bg-[#0f2a4a] text-white border-b-2 border-amber-400 shadow-md sticky top-0 z-40">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-20">
               {/* Logo and Brand */}
               <div className="flex items-center gap-3">
-                <div className="h-12 w-12 rounded-full bg-amber-400 flex items-center justify-center font-sans font-bold text-[#0f2a4a] shadow-inner text-lg border-2 border-white">
-                  SPS
-                </div>
+                {schoolLogo ? (
+                  <img 
+                    src={schoolLogo} 
+                    alt="School Logo" 
+                    className="h-12 w-12 rounded-full object-contain border-2 border-white shadow-sm bg-white shrink-0 p-0.5" 
+                  />
+                ) : (
+                  <div className="h-12 w-12 rounded-full bg-amber-400 flex items-center justify-center font-sans font-bold text-[#0f2a4a] shadow-inner text-lg border-2 border-white shrink-0">
+                    <MonitorPlay className="h-6 w-6" />
+                  </div>
+                )}
                 <div>
                   <h1 className="text-base sm:text-lg font-bold tracking-tight font-sans text-amber-400">
-                    សាលារៀនសុវណ្ណភូមិ
+                    ប្រព័ន្ធប្រឡងកុំព្យូទ័រ
                   </h1>
                   <p className="text-[10px] sm:text-xs text-slate-200 uppercase tracking-widest font-semibold">
-                    Sovannaphumi School Survey
+                    Computer Subject Exam
                   </p>
                 </div>
               </div>
 
-              {/* Navigation Tabs */}
-              <nav className="flex items-center gap-1">
-                <button
-                  onClick={() => setActiveView('dashboard')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                    activeView === 'dashboard'
-                      ? 'bg-amber-400 text-[#0f2a4a]'
-                      : 'text-slate-200 hover:bg-slate-800'
-                  }`}
-                >
-                  <Database className="h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">ផ្ទាំងគ្រប់គ្រង</span>
-                </button>
-                
-                <button
-                  onClick={() => setActiveView('survey')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                    activeView === 'survey'
-                      ? 'bg-amber-400 text-[#0f2a4a]'
-                      : 'text-slate-200 hover:bg-slate-800'
-                  }`}
-                >
-                  <ClipboardList className="h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">បំពេញសំណួរ</span>
-                </button>
+              {/* Navigation Tabs (Only when authenticated) */}
+              {currentUser && (
+                <nav className="flex items-center gap-1">
+                  <button
+                    onClick={() => setActiveView('dashboard')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                      activeView === 'dashboard'
+                        ? 'bg-amber-400 text-[#0f2a4a]'
+                        : 'text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <Database className="h-4 w-4 shrink-0" />
+                    <span className="hidden sm:inline">ផ្ទាំងគ្រប់គ្រង</span>
+                  </button>
 
-                <button
-                  onClick={() => setActiveView('script')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                    activeView === 'script'
-                      ? 'bg-amber-400 text-[#0f2a4a]'
-                      : 'text-slate-200 hover:bg-slate-800'
-                  }`}
-                >
-                  <FileSpreadsheet className="h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">កូដ Google Script</span>
-                </button>
+                  <button
+                    onClick={() => setActiveView('questions')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                      activeView === 'questions'
+                        ? 'bg-amber-400 text-[#0f2a4a]'
+                        : 'text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <BookOpen className="h-4 w-4 shrink-0" />
+                    <span className="hidden sm:inline">គ្រប់គ្រងវិញ្ញាសា</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => setActiveView('survey')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                      activeView === 'survey'
+                        ? 'bg-amber-400 text-[#0f2a4a]'
+                        : 'text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <ClipboardList className="h-4 w-4 shrink-0" />
+                    <span className="hidden sm:inline">ផ្ទាំងប្រឡង</span>
+                  </button>
 
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className="p-2 rounded-xl hover:bg-slate-800 text-slate-200 transition cursor-pointer"
-                  title="Google Sheets Configuration"
-                >
-                  <Settings className="h-4 w-4" />
-                </button>
-              </nav>
+                  <button
+                    onClick={() => setActiveView('script')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                      activeView === 'script'
+                        ? 'bg-amber-400 text-[#0f2a4a]'
+                        : 'text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                    <span className="hidden sm:inline">កូដ Google Script</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTempUrl(webAppUrl);
+                      setTempLogo(schoolLogo);
+                      setShowSettings(true);
+                    }}
+                    className="p-2 rounded-xl hover:bg-slate-800 text-slate-200 transition cursor-pointer"
+                    title="ការកំណត់ប្រព័ន្ធ"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </button>
+
+                  <div className="flex items-center gap-2 ml-1 pl-2 border-l border-slate-700">
+                    <span className="hidden lg:inline text-xs text-amber-200 font-medium truncate max-w-[140px]" title={currentUser.email || ''}>
+                      {currentUser.email}
+                    </span>
+                    <button
+                      onClick={() => setShowSignOutConfirm(true)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-semibold transition cursor-pointer"
+                      title="ចាកចេញ (Sign Out)"
+                    >
+                      <LogOut className="h-4 w-4 shrink-0" />
+                      <span className="hidden sm:inline">ចាកចេញ</span>
+                    </button>
+                  </div>
+                </nav>
+              )}
             </div>
           </div>
         </header>
       ) : (
         <header className="bg-[#0f2a4a] text-white border-b-2 border-amber-400 shadow-md py-6 text-center">
           <div className="max-w-7xl mx-auto px-4 flex flex-col items-center gap-2">
-            <div className="h-14 w-14 rounded-full bg-amber-400 flex items-center justify-center font-bold text-[#0f2a4a] shadow-md border-2 border-white">
-              SPS
-            </div>
+            {schoolLogo ? (
+              <img 
+                src={schoolLogo} 
+                alt="School Logo" 
+                className="h-14 w-14 rounded-full object-cover border-2 border-white shadow-md bg-white shrink-0" 
+              />
+            ) : (
+              <div className="h-14 w-14 rounded-full bg-amber-400 flex items-center justify-center font-bold text-[#0f2a4a] shadow-md border-2 border-white shrink-0">
+                <MonitorPlay className="h-7 w-7" />
+              </div>
+            )}
             <div>
               <h1 className="text-xl font-bold tracking-tight text-amber-400 font-sans">
-                សាលារៀនសុវណ្ណភូមិ
+                ការប្រឡងមុខវិជ្ជាកុំព្យូទ័រ
               </h1>
               <p className="text-xs text-slate-200 uppercase tracking-widest font-semibold mt-0.5">
-                ទម្រង់ស្ទង់មតិការសិក្សាសម្រាប់មាតាបិតា/អាណាព្យាបាលសិស្ស
+                សម្រាប់សិស្សានុសិស្សចាប់ពីថ្នាក់ទី១ ដល់ថ្នាក់ទី១២
               </p>
             </div>
           </div>
@@ -321,16 +425,22 @@ export default function App() {
             </button>
 
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2 mb-2">
-              <Key className="h-5 w-5 text-amber-500" />
-              ការកំណត់ការភ្ជាប់ Google Sheet
+              <Settings className="h-5 w-5 text-amber-500" />
+              ការកំណត់ប្រព័ន្ធ (System Settings)
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed mb-4">
-              បញ្ចូល <strong className="text-slate-600">Google Apps Script Web App URL</strong> ដែលបានមកពីការ Deploy របស់អ្នក ដើម្បីបញ្ជូនទិន្នន័យស្វ័យប្រវត្តិទៅកាន់ Google Sheet។
+              គ្រប់គ្រងការភ្ជាប់ Google Sheet សម្រាប់ស្វ័យប្រវត្តិតារាងទិន្នន័យប្រឡង។
             </p>
 
             <form onSubmit={saveSettings} className="space-y-4">
+              {/* Google Sheets WebApp URL */}
+
+              {/* Google Sheets WebApp URL */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Web App API URL</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Key className="h-4 w-4 text-amber-500" />
+                  Web App API URL (Google Sheet)
+                </label>
                 <input
                   type="url"
                   placeholder="https://script.google.com/macros/s/.../exec"
@@ -368,7 +478,7 @@ export default function App() {
       )}
 
       {/* Sheet Banner alerting user to configure webhook if not already done */}
-      {!webAppUrl && activeView !== 'script' && !isParentView && (
+      {!webAppUrl && activeView !== 'script' && !isStudentView && currentUser && (
         <div className="bg-amber-50 border-b border-amber-100 text-amber-800 py-3 px-4 text-xs font-medium">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 sm:px-6 lg:px-8">
             <span className="flex items-center gap-1.5 leading-relaxed">
@@ -387,28 +497,92 @@ export default function App() {
 
       {/* Main Content Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeView === 'survey' && (
-          <SurveyFormView onSubmit={handleSurveySubmit} webAppUrl={webAppUrl} />
-        )}
-        {activeView === 'dashboard' && (
-          <DashboardView 
-            responses={responses} 
-            onUpdateResponse={handleUpdateResponse}
-            onDeleteResponse={handleDeleteResponse}
+        {authLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="animate-spin text-2xl text-amber-500">⏳</div>
+          </div>
+        ) : !currentUser && !isStudentView ? (
+          <AuthView 
+            schoolLogo={schoolLogo} 
+            onSuccessRedirect={() => setActiveView('dashboard')} 
           />
-        )}
-        {activeView === 'script' && (
-          <AppsScriptView />
+        ) : (
+          <>
+            {activeView === 'survey' && (
+              <ExamFormView onSubmit={handleExamSubmit} webAppUrl={webAppUrl} schoolLogo={schoolLogo} />
+            )}
+            {activeView === 'questions' && (
+              <QuestionsManagerView />
+            )}
+            {activeView === 'dashboard' && (
+              <DashboardView 
+                results={results} 
+                onUpdateResult={handleUpdateResult}
+                onDeleteResult={handleDeleteResult}
+                schoolLogo={schoolLogo}
+                userId={currentUser?.uid}
+              />
+            )}
+            {activeView === 'script' && (
+              <AppsScriptView />
+            )}
+          </>
         )}
       </main>
 
       {/* Footer copyright */}
       <footer className="bg-slate-100 border-t border-slate-200 py-6 text-center text-slate-400 text-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-1">
-          <p>© {new Date().getFullYear()} សាលារៀនសុវណ្ណភូមិ (Sovannaphumi School). រក្សាសិទ្ធិគ្រប់យ៉ាង។</p>
-          <p className="text-[10px] text-slate-300">ប្រព័ន្ធគ្រប់គ្រងការស្ទង់មតិ និងស្វ័យប្រវត្តិតារាងទិន្នន័យ Google Workspace</p>
+          <p>© {new Date().getFullYear()} ប្រព័ន្ធប្រឡងកុំព្យូទ័រ (Computer Exam System). រក្សាសិទ្ធិគ្រប់យ៉ាង។</p>
+          <p className="text-[20px] text-slate-300">លោកគ្រូ យៀន ឧត្តម</p>
         </div>
       </footer>
+
+      {/* SIGN OUT CONFIRMATION MODAL */}
+      {showSignOutConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-sm w-full p-6 relative animate-in fade-in zoom-in duration-150 text-center">
+            <div className="h-12 w-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-3 border border-rose-100">
+              <LogOut className="h-6 w-6" />
+            </div>
+
+            <h3 className="text-base font-bold text-[#0f2a4a]">
+              បញ្ជាក់ការចាកចេញ (Confirm Sign Out)
+            </h3>
+            
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+              តើអ្នកពិតជាចង់ចាកចេញពីប្រព័ន្ធមែនទេ? អ្នកនឹងត្រូវចូលប្រើប្រាស់ឡើងវិញ ដើម្បីមើល និងគ្រប់គ្រងទិន្នន័យ។
+            </p>
+
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setShowSignOutConfirm(false)}
+                className="flex-1 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                បោះបង់ (Cancel)
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await signOut(auth);
+                    setActiveView('dashboard');
+                  } catch (err) {
+                    console.error('Error signing out:', err);
+                  } finally {
+                    setShowSignOutConfirm(false);
+                  }
+                }}
+                className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>ចាកចេញ</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,1 +1,79 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Kantumruy+Pro:ital,wght@0,100..700;1,100..700&display=swap');
+
+@theme {
+  --font-sans: 'Kantumruy Pro', sans-serif;
+}
+
+:root {
+  font-family: 'Kantumruy Pro', sans-serif;
+}
+
+*, ::before, ::after {
+  font-family: 'Kantumruy Pro', sans-serif !important;
+}
+
+body, button, input, select, textarea {
+  font-family: 'Kantumruy Pro', sans-serif !important;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 15mm 15mm 15mm 15mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+    line-height: 1.5;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .print-content, .print-content * {
+    visibility: visible;
+  }
+
+  .print-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+  }
+
+  .no-print, .no-print * {
+    display: none !important;
+  }
+
+  .page-break {
+    page-break-before: always;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 6px 10px !important;
+  }
+
+  /* Keep cards and rows intact across pages */
+  .print-card, .print-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+
